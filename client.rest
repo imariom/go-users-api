@@ -1,0 +1,35 @@
+### list all users
+
+GET http://localhost:8080/users HTTP/1.1
+
+### get single user
+
+GET http://localhost:8080/users/0 HTTP/1.1
+
+### create a new user
+
+POST http://localhost:8080/users HTTP/1.1
+Content-Type: application/json
+
+{
+    "username": "test",
+    "password": "123456",
+    "email": "test@api.com",
+    "role": 1
+}
+
+### update a user
+
+PUT http://localhost:8080/users/0 HTTP/1.1
+Content-Type: application/json
+
+{
+    "username": "test",
+    "password": "123456",
+    "email": "test@api.com",
+    "role": 1
+}
+
+### delete a user
+
+DELETE http://localhost:8080/users/0 HTTP/1.1
