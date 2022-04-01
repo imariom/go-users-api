@@ -36,6 +36,15 @@ type UserHandler struct {
 	users DataStore
 }
 
+// currUserId store the id of the last user created.
+var currUserId = 0
+
+// nextUserId return the next id for the user that is being created.
+func nextUserId() int {
+	currUserId += 1
+	return currUserId
+}
+
 // ServeHTTP is the HTTP handler implementation of the UserHandler.
 func (h *UserHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	// set API to be JSON based
@@ -136,6 +145,31 @@ func (h *UserHandler) get(rw http.ResponseWriter, r *http.Request) {
 // in-memory data store.
 func (h *UserHandler) create(rw http.ResponseWriter, r *http.Request) {
 	log.Println("[INFO] received a POST user request")
+
+	user := &User{}
+	if err := json.NewDecoder(r.Body).Decode(user); err != nil {
+		errMsg := fmt.Sprintf(
+			"an error occured while parsing user payload")
+
+		http.Error(rw, errMsg, http.StatusBadRequest)
+		log.Println("[ERROR] " + errMsg)
+	}
+
+	// secure concurrent access on the data store
+	h.users.Lock()
+	defer h.users.Unlock()
+
+	user.ID = nextUserId()
+	h.users.store[user.ID] = user
+
+	// return created user
+	if err := json.NewEncoder(rw).Encode(user); err != nil {
+		errMsg := fmt.Sprintf(
+			"an error occured to return created user")
+
+		http.Error(rw, errMsg, http.StatusBadRequest)
+		log.Println("[ERROR] " + errMsg)
+	}
 }
 
 // update receive a user payload information and update the
