@@ -207,13 +207,49 @@ func (h *UserHandler) update(rw http.ResponseWriter, r *http.Request) {
 	// try to return updated user
 	if err := user.toJSON(rw); err != nil {
 		http.Error(rw, fmt.Sprintf("Failed to retrieve user: %s", err.Error()),
-			http.StatusNotFound)
+			http.StatusInternalServerError)
 	}
 }
 
 // delete removes a user from the datastore
 func (h *UserHandler) delete(rw http.ResponseWriter, r *http.Request) {
 	log.Println("[INFO] received a DELETE user request")
+
+	// try to parse user {id} from the request URL
+	deleteUserRe := regexp.MustCompile(`^/users/(\d+)$`)
+
+	matches := deleteUserRe.FindStringSubmatch(r.URL.Path)
+	if len(matches) < 2 {
+		errMsg := fmt.Sprintf("invalid user id")
+
+		http.Error(rw, errMsg, http.StatusBadRequest)
+		log.Println("[ERROR] " + errMsg)
+		return
+	}
+	id, _ := strconv.Atoi(matches[1])
+
+	// try to delete a user from data store
+	h.users.Lock()
+	defer h.users.Unlock()
+
+	if _, ok := h.users.store[id]; !ok {
+		errMsg := fmt.Sprintf("user %d not found", id)
+
+		http.Error(rw, errMsg, http.StatusNotFound)
+		log.Println("[ERROR] " + errMsg)
+		return
+	}
+
+	user := &User{}
+	*user = *h.users.store[id]
+
+	delete(h.users.store, id)
+
+	// try to return deleted user
+	if err := user.toJSON(rw); err != nil {
+		http.Error(rw, fmt.Sprintf("Failed to retrieve user: %s", err.Error()),
+			http.StatusInternalServerError)
+	}
 }
 
 // toJSON tries to encodes current user information to JSON format onto the
@@ -232,14 +268,7 @@ func main() {
 	// create the handler for the HTTP requests
 	userHandler := &UserHandler{
 		users: DataStore{
-			store: map[int]*User{
-				0: {
-					ID:       0,
-					Username: "admin",
-					Password: "123456",
-					Email:    "admin@api.com",
-				},
-			},
+			store:   map[int]*User{},
 			RWMutex: &sync.RWMutex{},
 		},
 	}
