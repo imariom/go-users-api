@@ -13,28 +13,39 @@ import (
 
 // User represents a real world user of a particular system.
 type User struct {
-	ID       int    `json:"id"`
+	// ID is the API automatically generated user identification number.
+	//
+	// This ID is generated when a POST user request is made.
+	ID int `json:"id"`
+
+	// Username is the username of the user of the API.
 	Username string `json:"username"`
+
+	// Password is the password of the user of the API.
 	Password string `json:"password"`
-	Email    string `json:"email"`
-	Role     int    `json:"role"`
+
+	// Email is the email of the user of the API.
+	Email string `json:"email"`
 }
 
-// DataStore represents an In-Memory data store for the API
+// DataStore represents an in-memory data store for the API.
 type DataStore struct {
+	// store represents the in-memory data store.
 	store map[int]*User
+
 	*sync.RWMutex
 }
 
 // UserHandler is the HTTP handler for the http.Handler interface.
 type UserHandler struct {
+	// users is the data store for the users of the API.
 	users DataStore
 }
 
 // currUserId store the id of the last user created.
-var currUserId = 0
+var currUserId = -1
 
-// nextUserId return the next id for the user that is being created.
+// nextUserId generate the next id for the user that is being created.
 func nextUserId() int {
 	currUserId += 1
 	return currUserId
@@ -59,9 +70,9 @@ func (h *UserHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		h.delete(rw, r)
 
 	default:
-		errMsg := fmt.Sprintf("HTTP verb not implemented")
+		errMsg := "HTTP verb not implemented"
 		http.Error(rw, errMsg, http.StatusNotImplemented)
-		log.Println("[ERROR]", r.Method, errMsg)
+		log.Println("[INFO]", r.Method, errMsg)
 	}
 }
 
@@ -75,20 +86,19 @@ func (h *UserHandler) get(rw http.ResponseWriter, r *http.Request) {
 
 		// secure concurrent access on the data store
 		h.users.RLock()
-		defer h.users.RUnlock()
 
 		users := make([]*User, 0, len(h.users.store))
 		for _, v := range h.users.store {
 			users = append(users, v)
 		}
 
+		h.users.RUnlock()
+
 		// try to encode users to JSON and return it to client
 		if err := json.NewEncoder(rw).Encode(users); err != nil {
-			errMsg := fmt.Sprintf(
-				"an error occured while trying to get users")
-
+			errMsg := "an error occured while trying to get users"
 			http.Error(rw, errMsg, http.StatusInternalServerError)
-			log.Println("[ERROR] " + errMsg)
+			log.Println("[ERROR] "+errMsg, err.Error())
 		}
 
 		return
@@ -103,10 +113,9 @@ func (h *UserHandler) get(rw http.ResponseWriter, r *http.Request) {
 		// try to parse user {id} from the request URL
 		matches := getUserRe.FindStringSubmatch(r.URL.Path)
 		if len(matches) < 2 {
-			errMsg := fmt.Sprintf("invalid user id")
-
+			errMsg := "invalid user id"
 			http.Error(rw, errMsg, http.StatusBadRequest)
-			log.Println("[ERROR] " + errMsg)
+			log.Println("[INFO] " + errMsg)
 			return
 		}
 		id, _ := strconv.Atoi(matches[1])
@@ -119,17 +128,14 @@ func (h *UserHandler) get(rw http.ResponseWriter, r *http.Request) {
 		user, ok := h.users.store[id]
 		if !ok {
 			errMsg := fmt.Sprintf("user %d not found", id)
-
 			http.Error(rw, errMsg, http.StatusNotFound)
-			log.Println("[ERROR] " + errMsg)
+			log.Println("[INFO] " + errMsg)
 			return
 		}
 
 		// try to encode user to JSON and return it to client
-		if err := json.NewEncoder(rw).Encode(user); err != nil {
-			errMsg := fmt.Sprintf(
-				"an error occured while trying to get user")
-
+		if err := user.toJSON(rw); err != nil {
+			errMsg := "an error occured while trying to get user"
 			http.Error(rw, errMsg, http.StatusInternalServerError)
 			log.Println("[ERROR] "+errMsg, err.Error())
 		}
@@ -141,29 +147,28 @@ func (h *UserHandler) get(rw http.ResponseWriter, r *http.Request) {
 func (h *UserHandler) create(rw http.ResponseWriter, r *http.Request) {
 	log.Println("[INFO] received a POST user request")
 
+	// try to parse User from request payload
 	user := &User{}
-	if err := json.NewDecoder(r.Body).Decode(user); err != nil {
-		errMsg := fmt.Sprintf(
-			"an error occured while parsing user payload")
-
+	if err := user.fromJSON(r.Body); err != nil {
+		errMsg := "an error occured while parsing user payload"
 		http.Error(rw, errMsg, http.StatusBadRequest)
-		log.Println("[ERROR] " + errMsg)
+		log.Println("[ERROR]", errMsg, err.Error())
+		return
 	}
 
 	// secure concurrent access on the data store
 	h.users.Lock()
 	defer h.users.Unlock()
 
+	// add user on data store
 	user.ID = nextUserId()
 	h.users.store[user.ID] = user
 
-	// return created user
-	if err := json.NewEncoder(rw).Encode(user); err != nil {
-		errMsg := fmt.Sprintf(
-			"an error occured to return created user")
-
-		http.Error(rw, errMsg, http.StatusBadRequest)
-		log.Println("[ERROR] " + errMsg)
+	// try to return created user
+	if err := user.toJSON(rw); err != nil {
+		errMsg := "an error occured while trying to retrieve created user"
+		http.Error(rw, errMsg, http.StatusInternalServerError)
+		log.Println("[ERROR]", errMsg, err.Error())
 	}
 }
 
@@ -172,15 +177,14 @@ func (h *UserHandler) create(rw http.ResponseWriter, r *http.Request) {
 func (h *UserHandler) update(rw http.ResponseWriter, r *http.Request) {
 	log.Println("[INFO] received a PUT user request")
 
-	// try to parse user {id} from the request URL
+	// parse user {id} from the request URL
 	updateUserRe := regexp.MustCompile(`^/users/(\d+)$`)
 
 	matches := updateUserRe.FindStringSubmatch(r.URL.Path)
 	if len(matches) < 2 {
-		errMsg := fmt.Sprintf("invalid user id")
-
+		errMsg := "invalid user id"
 		http.Error(rw, errMsg, http.StatusBadRequest)
-		log.Println("[ERROR] " + errMsg)
+		log.Println("[INFO]", errMsg)
 		return
 	}
 	id, _ := strconv.Atoi(matches[1])
@@ -188,26 +192,33 @@ func (h *UserHandler) update(rw http.ResponseWriter, r *http.Request) {
 	// parse user data from request payload
 	user := &User{}
 	if err := user.fromJSON(r.Body); err != nil {
-		http.Error(rw, "Invalid payload data", http.StatusBadRequest)
+		errMsg := "invalid payload data"
+		http.Error(rw, errMsg, http.StatusBadRequest)
+		log.Println("[ERROR]", errMsg, err.Error())
 		return
 	}
 
-	// update user information
+	// secure concurrent access to data store
 	h.users.Lock()
 	defer h.users.Unlock()
 
+	// check if user exist on data store
 	if _, ok := h.users.store[id]; !ok {
-		http.Error(rw, "User does not exist", http.StatusNotFound)
+		errMsg := fmt.Sprintf("user %d not found", id)
+		http.Error(rw, errMsg, http.StatusNotFound)
+		log.Println("[INFO]", errMsg)
 		return
 	}
 
+	// update user
 	user.ID = id
 	h.users.store[id] = user
 
 	// try to return updated user
 	if err := user.toJSON(rw); err != nil {
-		http.Error(rw, fmt.Sprintf("Failed to retrieve user: %s", err.Error()),
-			http.StatusInternalServerError)
+		errMsg := "an error occured while trying to get user"
+		http.Error(rw, errMsg, http.StatusInternalServerError)
+		log.Println("[ERROR]", errMsg, err.Error())
 	}
 }
 
@@ -215,40 +226,40 @@ func (h *UserHandler) update(rw http.ResponseWriter, r *http.Request) {
 func (h *UserHandler) delete(rw http.ResponseWriter, r *http.Request) {
 	log.Println("[INFO] received a DELETE user request")
 
-	// try to parse user {id} from the request URL
+	// parse user {id} from the request URL
 	deleteUserRe := regexp.MustCompile(`^/users/(\d+)$`)
 
 	matches := deleteUserRe.FindStringSubmatch(r.URL.Path)
 	if len(matches) < 2 {
-		errMsg := fmt.Sprintf("invalid user id")
-
+		errMsg := "invalid user id"
 		http.Error(rw, errMsg, http.StatusBadRequest)
-		log.Println("[ERROR] " + errMsg)
+		log.Println("[INFO]", errMsg)
 		return
 	}
 	id, _ := strconv.Atoi(matches[1])
 
-	// try to delete a user from data store
+	// secure concurrent access to data store
 	h.users.Lock()
 	defer h.users.Unlock()
 
+	// check if user exist on the data store
 	if _, ok := h.users.store[id]; !ok {
 		errMsg := fmt.Sprintf("user %d not found", id)
-
 		http.Error(rw, errMsg, http.StatusNotFound)
-		log.Println("[ERROR] " + errMsg)
+		log.Println("[INFO]", errMsg)
 		return
 	}
 
+	// delete user from data store
 	user := &User{}
 	*user = *h.users.store[id]
-
 	delete(h.users.store, id)
 
 	// try to return deleted user
 	if err := user.toJSON(rw); err != nil {
-		http.Error(rw, fmt.Sprintf("Failed to retrieve user: %s", err.Error()),
-			http.StatusInternalServerError)
+		errMsg := "an error occured while trying to get the deleted user:"
+		http.Error(rw, errMsg, http.StatusInternalServerError)
+		log.Println("[ERROR]", errMsg, err.Error())
 	}
 }
 
