@@ -3,17 +3,12 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"regexp"
 	"strconv"
 	"sync"
-)
-
-const (
-	ADMIN = iota
-	MANAGER
-	GENERAL
 )
 
 // User represents a real world user of a particular system.
@@ -176,6 +171,44 @@ func (h *UserHandler) create(rw http.ResponseWriter, r *http.Request) {
 // corresponding user with the {id} parameter of the request.
 func (h *UserHandler) update(rw http.ResponseWriter, r *http.Request) {
 	log.Println("[INFO] received a PUT user request")
+
+	// try to parse user {id} from the request URL
+	updateUserRe := regexp.MustCompile(`^/users/(\d+)$`)
+
+	matches := updateUserRe.FindStringSubmatch(r.URL.Path)
+	if len(matches) < 2 {
+		errMsg := fmt.Sprintf("invalid user id")
+
+		http.Error(rw, errMsg, http.StatusBadRequest)
+		log.Println("[ERROR] " + errMsg)
+		return
+	}
+	id, _ := strconv.Atoi(matches[1])
+
+	// parse user data from request payload
+	user := &User{}
+	if err := user.fromJSON(r.Body); err != nil {
+		http.Error(rw, "Invalid payload data", http.StatusBadRequest)
+		return
+	}
+
+	// update user information
+	h.users.Lock()
+	defer h.users.Unlock()
+
+	if _, ok := h.users.store[id]; !ok {
+		http.Error(rw, "User does not exist", http.StatusNotFound)
+		return
+	}
+
+	user.ID = id
+	h.users.store[id] = user
+
+	// try to return updated user
+	if err := user.toJSON(rw); err != nil {
+		http.Error(rw, fmt.Sprintf("Failed to retrieve user: %s", err.Error()),
+			http.StatusNotFound)
+	}
 }
 
 // delete removes a user from the datastore
@@ -183,17 +216,28 @@ func (h *UserHandler) delete(rw http.ResponseWriter, r *http.Request) {
 	log.Println("[INFO] received a DELETE user request")
 }
 
+// toJSON tries to encodes current user information to JSON format onto the
+// io.Writer object.
+func (u *User) toJSON(w io.Writer) error {
+	return json.NewEncoder(w).Encode(u)
+}
+
+// fromJSON tries to decode the payload into the current user from the
+// io.Reader object.
+func (u *User) fromJSON(r io.Reader) error {
+	return json.NewDecoder(r).Decode(u)
+}
+
 func main() {
 	// create the handler for the HTTP requests
 	userHandler := &UserHandler{
 		users: DataStore{
 			store: map[int]*User{
-				0: &User{
+				0: {
 					ID:       0,
 					Username: "admin",
 					Password: "123456",
 					Email:    "admin@api.com",
-					Role:     ADMIN,
 				},
 			},
 			RWMutex: &sync.RWMutex{},
@@ -206,7 +250,7 @@ func main() {
 
 	// Initialize and run server
 	const PORT = "8080"
-	log.Printf("server starting at %s\n", PORT)
+	log.Printf("server starting at http://localhost:%s/\n", PORT)
 
 	log.Fatalln(http.ListenAndServe(fmt.Sprintf(":%s", PORT), mux))
 }
